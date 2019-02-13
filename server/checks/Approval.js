@@ -70,7 +70,7 @@ export default class Approval extends Check {
    * @param approvalConfig Approval configuration
    * @returns {Object} Object consumable by Github Status API
    */
-  static generateStatus({approvals, vetos}, {minimum, groups}) {
+  static generateStatus({approvals, vetos}, {minimum, groups}, labels) {
     if (vetos.length > 0) {
       return {
         description: `Vetoes: ${vetos.map(u => `@${u}`).join(', ')}.`,
@@ -83,7 +83,19 @@ export default class Approval extends Check {
       // check group requirements
       const unsatisfied = Object.keys(approvals.groups)
                                 .reduce((result, approvalGroup) => {
-                                  const needed = groups[approvalGroup].minimum
+                                  let needed = groups[approvalGroup].minimum
+                                  if (labels) {
+                                    needed = -1
+                                    if (groups[approvalGroup].conditions && groups[approvalGroup].conditions.labels) {
+                                      if (groups[approvalGroup].conditions.labels.exclude && groups[approvalGroup].conditions.labels.exclude.some(l=> labels.includes(l))) {
+                                        needed = 0
+                                      }
+                                      if (needed === -1 && groups[approvalGroup].conditions.labels.include && !groups[approvalGroup].conditions.labels.include.some(l=> labels.includes(l))) {
+                                        needed = 0
+                                      }
+                                    }
+                                    if (needed === -1) needed = groups[approvalGroup].minimum
+                                  }
                                   const given = approvals.groups[approvalGroup].length
                                   const diff = needed - given
                                   if (diff > 0) {
@@ -341,7 +353,8 @@ export default class Approval extends Check {
     const repoName = repository.name
     const sha = pull_request.head.sha
     const {approvals, vetos} = await this.fetchAndCountApprovalsAndVetos(repository, pull_request, lastPush, additionalComments, config, token)
-    const status = Approval.generateStatus({approvals, vetos}, config.approvals)
+    const labels = await this.github.getIssueLabels(user, repoName, pull_request.number, token)
+    const status = Approval.generateStatus({approvals, vetos}, config.approvals, labels)
     // update status
     await this.github.setCommitStatus(user, repoName, sha, status, token)
     await this.audit.log(new AuditEvent(AUDIT_EVENTS.COMMIT_STATUS_UPDATE).fromGithubEvent({
@@ -429,7 +442,8 @@ export default class Approval extends Check {
             // if it was opened, set to pending
             const approvals = {total: []}
             const vetos = []
-            const status = Approval.generateStatus({approvals, vetos}, config.approvals)
+            const labels = await this.github.getIssueLabels(user, repoName, pull_request.number, token)
+            const status = Approval.generateStatus({approvals, vetos}, config.approvals, labels)
             await this.github.setCommitStatus(user, repoName, sha, status, token)
             await this.audit.log(new AuditEvent(AUDIT_EVENTS.COMMIT_STATUS_UPDATE).fromGithubEvent(hookPayload)
                                                                                   .withResult({
@@ -458,7 +472,8 @@ export default class Approval extends Check {
           // set status to pending (has to be unlocked with further comments)
           const approvals = {total: []}
           const vetos = []
-          const status = Approval.generateStatus({approvals, vetos}, config.approvals)
+          const labels = await this.github.getIssueLabels(user, repoName, pull_request.number, token)
+          const status = Approval.generateStatus({approvals, vetos}, config.approvals, labels)
           await this.github.setCommitStatus(user, repoName, sha, status, token)
           await this.audit.log(new AuditEvent(AUDIT_EVENTS.COMMIT_STATUS_UPDATE).fromGithubEvent(hookPayload)
                                                                                 .withResult({
@@ -472,6 +487,15 @@ export default class Approval extends Check {
                                                                                   repository
                                                                                 }))
           info(`${repository.full_name}#${number}: PR was synced, set state to pending`)
+        } else if (action === 'labeled' || action === 'unlabeled'){
+          // set status to pending first
+          await this.github.setCommitStatus(user, repoName, sha, pendingPayload, token)
+          // read last push date from db
+          const dbPR = await this.getOrCreateDbPullRequest(dbRepoId, number)
+          // read frozen comments and update if appropriate
+          const frozenComments = await this.pullRequestHandler.onGetFrozenComments(dbPR.id, dbPR.last_push)
+          debug(`${repository.full_name}#${number}: ${action}`)
+          await this.fetchApprovalsAndSetStatus(repository, pull_request, dbPR.last_push, config, token, frozenComments)
         }
         // on an issue comment
       } else if (event === EVENTS.ISSUE_COMMENT) {

@@ -1,0 +1,60 @@
+{
+  "url": "https://api.github.com/repos/zalando/zappr/issues/464",
+  "repository_url": "https://api.github.com/repos/zalando/zappr",
+  "labels_url": "https://api.github.com/repos/zalando/zappr/issues/464/labels{/name}",
+  "comments_url": "https://api.github.com/repos/zalando/zappr/issues/464/comments",
+  "events_url": "https://api.github.com/repos/zalando/zappr/issues/464/events",
+  "html_url": "https://github.com/zalando/zappr/pull/464",
+  "id": 38070436,
+  "node_id": "MDExOlB1bGxSZXF1ZXN0MjMwODQwMjU4",
+  "number": 464,
+  "title": "Nice Pull Request",
+  "user": {
+      "login": "niceuser",
+      "id": 9108438,
+      "node_id": "MDQ6VXNlcjkxMDg0Mzg=",
+      "avatar_url": "https://avatars1.githubusercontent.com/u/9108438?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/niceuser",
+      "html_url": "https://github.com/niceuser",
+      "followers_url": "https://api.github.com/users/niceuser/followers",
+      "following_url": "https://api.github.com/users/niceuser/following{/other_user}",
+      "gists_url": "https://api.github.com/users/niceuser/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/niceuser/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/niceuser/subscriptions",
+      "organizations_url": "https://api.github.com/users/niceuser/orgs",
+      "repos_url": "https://api.github.com/users/niceuser/repos",
+      "events_url": "https://api.github.com/users/niceuser/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/niceuser/received_events",
+      "type": "User",
+      "site_admin": false
+  },
+  "labels": [
+      {
+          "id": 655384220,
+          "node_id": "MDU6TGFiZWw2NTUzODQyMjA=",
+          "url": "https://api.github.com/repos/zalando/zappr/labels/foolabel",
+          "name": "foolabel",
+          "color": "fbca04",
+          "default": false
+      }
+  ],
+  "state": "open",
+  "locked": false,
+  "assignee": null,
+  "assignees": [],
+  "milestone": null,
+  "comments": 0,
+  "created_at": "2018-11-14T13:45:37Z",
+  "updated_at": "2018-11-14T15:40:35Z",
+  "closed_at": null,
+  "author_association": "CONTRIBUTOR",
+  "pull_request": {
+      "url": "https://api.github.com/repos/zalando/zappr/pulls/464",
+      "html_url": "https://github.com/zalando/zappr/pull/464",
+      "diff_url": "https://github.com/zalando/zappr/pull/464.diff",
+      "patch_url": "https://github.com/zalando/zappr/pull/464.patch"
+  },
+  "body": "PR Body",
+  "closed_by": null
+}
