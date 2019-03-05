@@ -201,10 +201,12 @@ export default class Approval extends Check {
         if (matchesTotal) {
           info(`${repository.full_name}: Counting ${comment.user}'s comment`)
           stats.total.push(comment.user)
+          stats.processed.push(comment.id)
         }
       } else {
         // if there is no from clause, every comment counts
         stats.total.push(comment.user)
+        stats.processed.push(comment.id)
         matchesTotal = true
       }
       if (config.groups) {
@@ -219,6 +221,7 @@ export default class Approval extends Check {
             if (!matchesTotal) {
               info(`${repository.full_name}: Counting ${comment.user}'s comment`)
               stats.total.push(comment.user)
+              stats.processed.push(comment.id)
             }
             info(`${repository.full_name}: Counting ${comment.user}'s comment for group ${group}`)
             stats.groups[group].push(comment.user)
@@ -228,7 +231,7 @@ export default class Approval extends Check {
       return stats
     }
 
-    return promiseReduce(comments, checkComment, {total: [], groups: {}})
+    return promiseReduce(comments, checkComment, {total: [], groups: {}, processed: []})
   }
 
   /**
@@ -277,7 +280,7 @@ export default class Approval extends Check {
 
     const approvals = (config.from || config.groups) ?
       await this.getCommentStatsForConfig(repository, potentialApprovalComments, config, token) :
-    {total: potentialApprovalComments.map(c => c.user)}
+      {total: potentialApprovalComments.map(c => c.user), processed: potentialApprovalComments.map(c => c.id)}
 
 
     let vetos = []
@@ -291,8 +294,8 @@ export default class Approval extends Check {
                                             .filter(containsAlreadyCommentByUser)
 
       vetos = (config.from || config.groups) ?
-        (await this.getCommentStatsForConfig(repository, potentialVetoComments, config, token)).total :
-        potentialVetoComments.map(c => c.user)
+      await this.getCommentStatsForConfig(repository, potentialVetoComments, config, token) :
+    {total: potentialVetoComments.map(c => c.user), processed: potentialVetoComments.map(c => c.id)}
 
     }
 
@@ -365,23 +368,26 @@ export default class Approval extends Check {
    * @param token The GH token to use
    * @param additionalComments Additional comments to consider that are not available via the API
    * @param requiredOptionalPRInfo An object holding information about additional optional information to fetch for a PR
+   * @param issueComment The comment being processed
    */
-  async fetchApprovalsAndSetStatus(repository, pull_request, lastPush, config, token, additionalComments = [], requiredOptionalPRInfo) {
+  async fetchApprovalsAndSetStatus(repository, pull_request, lastPush, config, token, additionalComments = [], requiredOptionalPRInfo, issueComment) {
     const user = repository.owner.login
     const repoName = repository.name
     const sha = pull_request.head.sha
     const {approvals, vetos} = await this.fetchAndCountApprovalsAndVetos(repository, pull_request, lastPush, additionalComments, config, token)
     const labels = requiredOptionalPRInfo.labels ? await this.github.getIssueLabels(user, repoName, pull_request.number, token): []
-    const status = Approval.generateStatus({approvals, vetos}, config.approvals, labels)
+    const status = Approval.generateStatus({approvals, vetos: vetos.total}, config.approvals, labels)
     // update status
     await this.github.setCommitStatus(user, repoName, sha, status, token)
+    // set appropriate badge on PR comment
+    if (issueComment) await this.setCommentBadge(user, config, issueComment, approvals, vetos, repoName, token)
     await this.audit.log(new AuditEvent(AUDIT_EVENTS.COMMIT_STATUS_UPDATE).fromGithubEvent({
                                                                             repository,
                                                                             pull_request
                                                                           })
                                                                           .withResult({
                                                                             approvals,
-                                                                            vetos,
+                                                                            vetos: vetos.total,
                                                                             status
                                                                           })
                                                                           .onResource({
@@ -389,7 +395,7 @@ export default class Approval extends Check {
                                                                             issue_number: pull_request.number,
                                                                             repository
                                                                           }))
-    info(`${repository.full_name}#${pull_request.number}: Set state to ${status.state} (${approvals.total.length}/${config.approvals.minimum} approvals, ${vetos.length ? 'vetos: ' + vetos : '0 vetos'})`)
+                                                                          info(`${repository.full_name}#${pull_request.number}: Set state to ${status.state} (${approvals.total.length}/${config.approvals.minimum} approvals, ${vetos.total.length ? 'vetos: ' + vetos.total : '0 vetos'})`)
   }
 
 
@@ -562,7 +568,7 @@ export default class Approval extends Check {
         }
         debug(`${repository.full_name}#${issue.number}: Comment added`)
         const requiredOptionalPRInfo = getOptionalDetailsRequiredForPR(config.approvals)
-        await this.fetchApprovalsAndSetStatus(repository, pr, dbPR.last_push, config, token, frozenComments, requiredOptionalPRInfo)
+        await this.fetchApprovalsAndSetStatus(repository, pr, dbPR.last_push, config, token, frozenComments, requiredOptionalPRInfo, hookPayload.comment)
       }
     }
     catch (e) {
@@ -575,4 +581,39 @@ export default class Approval extends Check {
     }
   }
 
+  /**
+   * Sets badges on comments (Github issue comments) made on PRs based on its impact (approval/rejection) on the PR
+   * @param user The owner of the repository
+   * @param config The Zappr configuration (all of it)
+   * @param comment This is the comment made by a reviewer on a PR
+   * @param approvals These are approvals on the PR being reviewed
+   * @param vetos There are vetos (rejections) on the PR being reviewed
+   * @param repoName The name of the repository been reviewed
+   * @param token The GitHub token to use
+   */
+  async setCommentBadge(user, config, comment, approvals, vetos, repoName, token) {
+    if (config.approvals.groups && comment.created_at === comment.updated_at) {
+      let commentBadges = []
+      let commentBadge = ""
+      if (vetos.processed.indexOf(comment.id) !== -1){
+        Object.keys(vetos.groups).map(async(group) => {
+          if (config.approvals.groups[group].badge && config.approvals.groups[group].badge.veto && vetos.groups[group].indexOf(comment.user.login) !== -1){
+            commentBadge = "![Vetoed with Zappr](" + config.approvals.groups[group].badge.veto + ") "
+            if (commentBadges.indexOf(commentBadge) === -1) commentBadges.push(commentBadge)
+          }
+        })
+      } else if (approvals.processed.indexOf(comment.id) !== -1) {
+        Object.keys(approvals.groups).map(async(group) => {
+          if (config.approvals.groups[group].badge && config.approvals.groups[group].badge.approve && approvals.groups[group].indexOf(comment.user.login) !== -1){
+            commentBadge = "![Approved with Zappr](" + config.approvals.groups[group].badge.approve + ") "
+            if (commentBadges.indexOf(commentBadge) === -1) commentBadges.push(commentBadge)
+          }
+        })
+      }
+
+      if (commentBadges.length > 0) {
+        await this.github.setIssueCommentBody(user, repoName, comment.id, comment.body + "\n\n" + commentBadges.join(' '), token)
+      }
+    }
+  }
 }

@@ -39,7 +39,8 @@ const API_URL_TEMPLATES = {
   BRANCH: '/repos/${owner}/${repo}/branches/${branch}',
   COMMITS: '/repos/${owner}/${repo}/git/commits',
   REPOS: '/user/repos?page=${page}&visibility=all',
-  REPO_BY_ID: '/repositories/${id}'
+  REPO_BY_ID: '/repositories/${id}',
+  ISSUE_COMMENT_BY_ID: '/repos/${owner}/${repo}/issues/comments/${comment}'
 }
 
 export class GithubService {
@@ -674,6 +675,27 @@ export class GithubService {
                                  .replace('${number}', number)
     const issue = await this.fetchPath('GET', url, null, token)
     return (issue.milestone == null) ? null : issue.milestone.title
+  }
+
+  /**
+   * Sets the comment on an issue/pull request.
+   *
+   * @param user
+   * @param repo
+   * @param commentId
+   * @param token
+   * @returns {string}
+   */
+  async setIssueCommentBody(user, repo, commentId, commentBody, token) {
+    const url = API_URL_TEMPLATES.ISSUE_COMMENT_BY_ID
+                                 .replace('${owner}', user)
+                                 .replace('${repo}', repo)
+                                 .replace('${comment}', commentId)
+    const payload = {
+      body: commentBody
+    }
+
+    return this.fetchPath('POST', url, payload, token)
   }
 }
 
