@@ -91,6 +91,22 @@ const REGULAR_ISSUE_PAYLOAD = {
     login: 'prayerslayer'
   }
 }
+const PR_COMMENT_PAYLOAD = {
+  action: 'created',
+  repository: DEFAULT_REPO,
+  issue: {
+    number: 1
+  },
+  comment: {
+    id: 2,
+    body: ':+1:',
+    created_at: '2016-08-15T13:03:28Z',
+    updated_at: '2016-08-15T13:03:28Z',
+    user: {
+      login: 'bar'
+    }
+  }
+}
 const PR_LABEL_PAYLOAD = Object.assign({}, PR_PAYLOAD, {action: 'labeled'})
 const PR_UNLABEL_PAYLOAD = Object.assign({}, PR_PAYLOAD, {action: 'unlabeled'})
 const DEFAULT_CONFIG = {
@@ -108,12 +124,40 @@ const CONFIG_APPROVAL_GROUPS = {
     minimum: 1,
     from: {
       users: ['foo', 'mr-foo']
+    },
+    badge: {
+      approve: 'fooapprovebadge',
+      veto: 'foovetobadge'
     }
   },
   bar: {
     minimum: 1,
     from: {
-      users: ['bar']
+      users: ['bar', 'baz']
+    },
+    badge: {
+      approve: 'barapprovebadge',
+      veto: 'barvetobadge'
+    }
+  },
+  bar2: {
+    minimum: 1,
+    from: {
+      users: ['bar', 'baz']
+    },
+    badge: {
+      approve: 'barapprovebadge',
+      veto: 'barvetobadge'
+    }
+  },
+  baz: {
+    minimum: 0,
+    from: {
+      users: ['baz']
+    },
+    badge: {
+      approve: 'bazapprovebadge',
+      veto: 'bazvetobadge'
     }
   }
 }
@@ -158,6 +202,17 @@ const LABEL_CONDITIONS_READY_CONFIG = {
       }
     })})
   })
+}
+const BADGE_READY_CONFIG = {
+  approvals: {
+    minimum: 2,
+    ignore: 'none',
+    pattern: '^:\\+1:$',
+    veto: {
+      pattern: '^:\\-1:$',
+    },
+    groups: CONFIG_APPROVAL_GROUPS
+  }
 }
 const SUCCESS_STATUS = Approval.generateStatus({
   approvals: {total: ['foo', 'bar']},
@@ -318,7 +373,7 @@ describe('Approval#countApprovalsAndVetos', () => {
     try {
       const approval = new Approval(null, null)
       const {approvals} = await approval.countApprovalsAndVetos(DEFAULT_REPO, {}, comments, DEFAULT_CONFIG.approvals)
-      expect(approvals).to.deep.equal({total: ['mfellner']})
+      expect(approvals).to.deep.equal({total: ['mfellner'], processed: [2]})
       done()
     } catch (e) {
       done(e)
@@ -678,7 +733,8 @@ describe('Approval#execute', () => {
       github.getComments = sinon.stub().returns([])
       approval.countApprovalsAndVetos = sinon.stub().returns({
         approvals: {total: ['red', 'blue', 'green', 'yellow']},
-        vetos: []
+        vetos: {total: []},
+        processed: []
       })
       await approval.execute(DEFAULT_CONFIG, EVENTS.PULL_REQUEST, PR_PAYLOAD, TOKEN, DB_REPO_ID)
       expect(github.setCommitStatus.callCount).to.equal(2)
@@ -1386,6 +1442,210 @@ describe('Approval#execute', () => {
         SUCCESS_STATUS,
         TOKEN
       ])
+      done()
+    } catch (e) {
+      done(e)
+    }
+  })
+
+  it('should not add comment badge if approval groups are not defined', async(done) => {
+    github.getComments = sinon.stub().returns([{
+      body: ':+1:',
+      user: 'foo',
+      id: 1
+    }, Object.assign({}, PR_COMMENT_PAYLOAD.comment, {user: PR_COMMENT_PAYLOAD.comment.user.login})])
+    github.getPullRequest = sinon.stub().returns(PR_PAYLOAD.pull_request)
+    github.setIssueCommentBody = sinon.spy()
+    try {
+      await approval.execute(DEFAULT_CONFIG, EVENTS.ISSUE_COMMENT, PR_COMMENT_PAYLOAD, TOKEN, DB_REPO_ID)
+
+      expect(github.setCommitStatus.callCount).to.equal(2)
+      expect(github.setIssueCommentBody.callCount).to.equal(0)
+
+      const successStatusCallArgs = github.setCommitStatus.args[1]
+      expect(successStatusCallArgs).to.deep.equal([
+        'mfellner',
+        'hello-world',
+        'abcd1234',
+        SUCCESS_STATUS,
+        TOKEN
+      ])
+      done()
+    } catch (e) {
+      done(e)
+    }
+  })
+
+  it('should not add comment badge if comment updated date is different from its created date. badge has been added already', async(done) => {
+    github.getComments = sinon.stub().returns([{
+      body: ':+1:',
+      user: 'foo',
+      id: 1
+    }, Object.assign({}, PR_COMMENT_PAYLOAD.comment, {user: PR_COMMENT_PAYLOAD.comment.user.login})])
+    
+    let payload = Object.assign({}, PR_COMMENT_PAYLOAD, {comment: Object.assign({}, PR_COMMENT_PAYLOAD.comment, {updated_at: '2016-03-02T13:37:01Z'})})
+    github.getPullRequest = sinon.stub().returns(PR_PAYLOAD.pull_request)
+    github.setIssueCommentBody = sinon.spy()
+    try {
+      await approval.execute(BADGE_READY_CONFIG, EVENTS.ISSUE_COMMENT, payload, TOKEN, DB_REPO_ID)
+
+      expect(github.setCommitStatus.callCount).to.equal(2)
+      expect(github.setIssueCommentBody.callCount).to.equal(0)
+
+      const successStatusCallArgs = github.setCommitStatus.args[1]
+      expect(successStatusCallArgs).to.deep.equal([
+        'mfellner',
+        'hello-world',
+        'abcd1234',
+        SUCCESS_STATUS,
+        TOKEN
+      ])
+      done()
+    } catch (e) {
+      done(e)
+    }
+  })
+
+  it('should not add comment badge if approving user is not a member of any defined group', async(done) => {
+    github.getComments = sinon.stub().returns([{
+      body: ':+1:',
+      user: 'foo',
+      id: 1
+    }, Object.assign({}, PR_COMMENT_PAYLOAD.comment, {user: PR_COMMENT_PAYLOAD.comment.user.login})])
+    github.getPullRequest = sinon.stub().returns(PR_PAYLOAD.pull_request)
+    github.setIssueCommentBody = sinon.spy()
+    const payload = Object.assign({}, PR_COMMENT_PAYLOAD, { comment: Object.assign({}, PR_COMMENT_PAYLOAD.comment, {user: {login: 'baz'}})})
+    try {
+      await approval.execute(BADGE_READY_CONFIG, EVENTS.ISSUE_COMMENT, payload, TOKEN, DB_REPO_ID)
+
+      expect(github.setCommitStatus.callCount).to.equal(2)
+      expect(github.setIssueCommentBody.callCount).to.equal(0)
+
+      const successStatusCallArgs = github.setCommitStatus.args[1]
+      expect(successStatusCallArgs).to.deep.equal([
+        'mfellner',
+        'hello-world',
+        'abcd1234',
+        SUCCESS_STATUS,
+        TOKEN
+      ])
+      done()
+    } catch (e) {
+      done(e)
+    }
+  })
+
+  it('correct comment badge should be set: approve', async(done) => {
+    github.getComments = sinon.stub().returns([{
+      body: ':+1:',
+      user: 'foo',
+      id: 1
+    }, Object.assign({}, PR_COMMENT_PAYLOAD.comment, {user: PR_COMMENT_PAYLOAD.comment.user.login})])
+    github.getPullRequest = sinon.stub().returns(PR_PAYLOAD.pull_request)
+    github.setIssueCommentBody = sinon.spy()
+    try {
+      await approval.execute(BADGE_READY_CONFIG, EVENTS.ISSUE_COMMENT, PR_COMMENT_PAYLOAD, TOKEN, DB_REPO_ID)
+      expect(github.setCommitStatus.callCount).to.equal(2)
+      expect(github.setIssueCommentBody.callCount).to.equal(1)
+
+      const successStatusCallArgs = github.setCommitStatus.args[1]
+      expect(successStatusCallArgs).to.deep.equal([
+        'mfellner',
+        'hello-world',
+        'abcd1234',
+        SUCCESS_STATUS,
+        TOKEN
+      ])
+      expect(github.setIssueCommentBody.args[0][3]).to.equal(PR_COMMENT_PAYLOAD.comment.body + "\n\n![Approved with Zappr](" + BADGE_READY_CONFIG.approvals.groups['bar'].badge.approve + ") ")
+      done()
+    } catch (e) {
+      done(e)
+    }
+  })
+
+  it('correct comment badge should be set: approve (multiple badges)', async(done) => {
+    const payload = Object.assign({}, PR_COMMENT_PAYLOAD, {comment: Object.assign({}, PR_COMMENT_PAYLOAD.comment, {user: {login: 'baz'}})})
+    github.getComments = sinon.stub().returns([{
+      body: ':+1:',
+      user: 'foo',
+      id: 1
+    }, Object.assign({}, payload.comment, {user: payload.comment.user.login})])
+    github.getPullRequest = sinon.stub().returns(PR_PAYLOAD.pull_request)
+    github.setIssueCommentBody = sinon.spy()
+    try {
+      await approval.execute(BADGE_READY_CONFIG, EVENTS.ISSUE_COMMENT, payload, TOKEN, DB_REPO_ID)
+      expect(github.setCommitStatus.callCount).to.equal(2)
+      expect(github.setIssueCommentBody.callCount).to.equal(1)
+
+      const successStatusCallArgs = github.setCommitStatus.args[1]
+      expect(successStatusCallArgs).to.deep.equal([
+        'mfellner',
+        'hello-world',
+        'abcd1234',
+        Object.assign({}, SUCCESS_STATUS, { "description": "Approvals: @foo, @baz." }),
+        TOKEN
+      ])
+      expect(github.setIssueCommentBody.args[0][3]).to.equal(PR_COMMENT_PAYLOAD.comment.body + "\n\n![Approved with Zappr](" + BADGE_READY_CONFIG.approvals.groups['bar'].badge.approve + ")  ![Approved with Zappr](" + BADGE_READY_CONFIG.approvals.groups['baz'].badge.approve + ") ")
+      done()
+    } catch (e) {
+      done(e)
+    }
+  })
+
+  it('correct comment badge should be set: veto', async(done) => {
+    const payload = Object.assign({}, PR_COMMENT_PAYLOAD, {comment: Object.assign({}, PR_COMMENT_PAYLOAD.comment, {body: ':-1:', user: {login: 'mr-foo'}})})
+    github.getComments = sinon.stub().returns([{
+      body: ':+1:',
+      user: 'foo',
+      id: 1
+    }, Object.assign({}, payload.comment, {user: payload.comment.user.login})])
+    github.getPullRequest = sinon.stub().returns(PR_PAYLOAD.pull_request)
+    github.setIssueCommentBody = sinon.spy()
+
+    try {
+      await approval.execute(BADGE_READY_CONFIG, EVENTS.ISSUE_COMMENT, payload, TOKEN, DB_REPO_ID)
+      expect(github.setCommitStatus.callCount).to.equal(2)
+      expect(github.setIssueCommentBody.callCount).to.equal(1)
+
+      const failureStatusCallArgs = github.setCommitStatus.args[1]
+      expect(failureStatusCallArgs).to.deep.equal([
+        'mfellner',
+        'hello-world',
+        'abcd1234',
+        BLOCKED_BY_VETO_STATUS,
+        TOKEN
+      ])
+      expect(github.setIssueCommentBody.args[0][3]).to.equal(payload.comment.body + "\n\n![Vetoed with Zappr](" + BADGE_READY_CONFIG.approvals.groups['foo'].badge.veto + ") ")
+      done()
+    } catch (e) {
+      done(e)
+    }
+  })
+
+  it('correct comment badge should be set: veto (multiple badges)', async(done) => {
+    const payload = Object.assign({}, PR_COMMENT_PAYLOAD, {comment: Object.assign({}, PR_COMMENT_PAYLOAD.comment, {body: ':-1:', user: {login: 'baz'}})})
+    github.getComments = sinon.stub().returns([{
+      body: ':+1:',
+      user: 'foo',
+      id: 1
+    }, Object.assign({}, payload.comment, {user: payload.comment.user.login})])
+    github.getPullRequest = sinon.stub().returns(PR_PAYLOAD.pull_request)
+    github.setIssueCommentBody = sinon.spy()
+
+    try {
+      await approval.execute(BADGE_READY_CONFIG, EVENTS.ISSUE_COMMENT, payload, TOKEN, DB_REPO_ID)
+      expect(github.setCommitStatus.callCount).to.equal(2)
+      expect(github.setIssueCommentBody.callCount).to.equal(1)
+
+      const failureStatusCallArgs = github.setCommitStatus.args[1]
+      expect(failureStatusCallArgs).to.deep.equal([
+        'mfellner',
+        'hello-world',
+        'abcd1234',
+        Object.assign({}, BLOCKED_BY_VETO_STATUS, { "description": "Vetoes: @baz." }),
+        TOKEN
+      ])
+      expect(github.setIssueCommentBody.args[0][3]).to.equal(payload.comment.body + "\n\n![Vetoed with Zappr](" + BADGE_READY_CONFIG.approvals.groups['bar'].badge.veto + ")  ![Vetoed with Zappr](" + BADGE_READY_CONFIG.approvals.groups['baz'].badge.veto + ") ")
       done()
     } catch (e) {
       done(e)

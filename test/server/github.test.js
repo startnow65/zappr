@@ -387,5 +387,30 @@ describe('The Github service', () => {
         done(e)
       }
     })
+
+    describe('#setIssueCommentBody', () => {
+      it('setIssueCommentBody', async(done) => {
+        try {
+          const USER = 'user'
+          const REPO = 'repo'
+          const TOKEN = 'token'
+          const COMMENTID = 1
+          const COMMENTBODY = 'comment'
+  
+          await github.setIssueCommentBody(USER, REPO, COMMENTID, COMMENTBODY, TOKEN)    
+          expect(github.fetchPath.args).to.deep.equal([
+            ['POST', `/repos/${USER}/${REPO}/issues/comments/${COMMENTID}`,
+              {
+                body: COMMENTBODY
+              },
+              TOKEN]
+          ])
+  
+          done()
+        } catch (e) {
+          done(e)
+        }
+      })
+    })
   })
 })
