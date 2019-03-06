@@ -17,6 +17,73 @@ function call(mountebankCall) {
   return `${mountebankCall.method} ${mountebankCall.path}`
 }
 
+async function do_welcome_pr_test(request, mountebank, imposter, fixtures) {
+  const repos = (await request.get('/api/repos').expect(200)).body
+  const id = repos[2].id
+  // enable approval check
+  await request.put(`/api/repos/${id}/approval`)
+               .send()
+               .expect(201)
+  const repo = await Repository.findById(id, {include: [Check]})
+  expect(repo.checks.length).to.equal(1)
+  expect(repo.checks[0].type).to.equal('approval')
+  expect(repo.welcomed).to.equal(true)
+
+  const calls = await mountebank.calls(imposter.port)
+  /**
+   * 1) get repos
+   * 2,3) zapprfile
+   * 4) get base
+   * 5) create branch
+   * 6) create file
+   * 7) create PR
+   * 8,9) get, update web hooks
+   * 10,11) get, update branch protection
+   * 12-14) fetch pull requests and update status on those
+   */
+  expect(calls.length).to.equal(14)
+  expect(call(calls[0])).to.equal('GET /user/repos')
+  // 2+3 are much async and interchangeable
+  expect(call(calls[1])).to.match(/^GET \/repos\/.+?\/contents\/\.zappr\.ya?ml$/)
+  expect(call(calls[2])).to.match(/^GET \/repos\/.+?\/contents\/\.zappr\.ya?ml$/)
+  const [,,, ...rest] = calls
+  expect(rest.map(call)).to.deep.equal([
+    `GET /repos/${fixtures.repo2FullName}/branches/master`,
+    `POST /repos/${fixtures.repo2FullName}/git/refs`,
+    `PUT /repos/${fixtures.repo2FullName}/contents/.zappr.yaml`,
+    `POST /repos/${fixtures.repo2FullName}/pulls`,
+    `GET /repos/${fixtures.repo2FullName}/hooks`,
+    `PATCH /repos/${fixtures.repo2FullName}/hooks/123`,
+    `GET /repos/${fixtures.repo2FullName}/branches/master`,
+    `PUT /repos/${fixtures.repo2FullName}/branches/master/protection`,
+    `GET /repos/${fixtures.repo2FullName}/pulls`,
+    `GET /repos/${fixtures.repo2FullName}/issues/${fixtures.pullRequests[0].number}/comments`,
+    `POST /repos/${fixtures.repo2FullName}/statuses/${fixtures.pullRequests[0].head.sha}`,
+  ])
+  const createBranchBody = JSON.parse(rest[1].body)
+  const createZapprBody = JSON.parse(rest[2].body)
+  const createPrBody = JSON.parse(rest[3].body)
+
+  const expectedBranchName = nconf.get('ZAPPR_WELCOME_BRANCH_NAME')
+  expect(createBranchBody).to.deep.equal({
+    ref: `refs/heads/${expectedBranchName}`,
+    sha: fixtures.branch.commit.sha
+  })
+
+  expect(createZapprBody).to.deep.equal({
+    message: `Create ${nconf.get('VALID_ZAPPR_FILE_PATHS')[0]}`,
+    branch: expectedBranchName,
+    content: encode(nconf.get('ZAPPR_AUTOCREATED_CONFIG'))
+  })
+
+  expect(createPrBody).to.deep.equal({
+    title: nconf.get('ZAPPR_WELCOME_TITLE'),
+    base: repos[2].json.default_branch,
+    head: expectedBranchName,
+    body: nconf.get('ZAPPR_WELCOME_TEXT')
+  })
+}
+
 describe('API', () => {
   const testUser = require('../fixtures/github.user.a.json')
   setUserId(testUser.id)
@@ -671,71 +738,7 @@ describe('API', () => {
   describe('PUT /api/repos/:id/:type', () => {
     it('should create a pull request when used the first time if no zapprfile is in repo', async(done) => {
       try {
-        const repos = (await request.get('/api/repos').expect(200)).body
-        const id = repos[2].id
-        // enable approval check
-        await request.put(`/api/repos/${id}/approval`)
-                     .send()
-                     .expect(201)
-        const repo = await Repository.findById(id, {include: [Check]})
-        expect(repo.checks.length).to.equal(1)
-        expect(repo.checks[0].type).to.equal('approval')
-        expect(repo.welcomed).to.equal(true)
-
-        const calls = await mountebank.calls(imposter.port)
-        /**
-         * 1) get repos
-         * 2,3) zapprfile
-         * 4) get base
-         * 5) create branch
-         * 6) create file
-         * 7) create PR
-         * 8,9) get, update web hooks
-         * 10,11) get, update branch protection
-         * 12-14) fetch pull requests and update status on those
-         */
-        expect(calls.length).to.equal(14)
-        expect(call(calls[0])).to.equal('GET /user/repos')
-        // 2+3 are much async and interchangeable
-        expect(call(calls[1])).to.match(/^GET \/repos\/.+?\/contents\/\.zappr\.ya?ml$/)
-        expect(call(calls[2])).to.match(/^GET \/repos\/.+?\/contents\/\.zappr\.ya?ml$/)
-        const [,,, ...rest] = calls
-        expect(rest.map(call)).to.deep.equal([
-          `GET /repos/${fixtures.repo2FullName}/branches/master`,
-          `POST /repos/${fixtures.repo2FullName}/git/refs`,
-          `PUT /repos/${fixtures.repo2FullName}/contents/.zappr.yaml`,
-          `POST /repos/${fixtures.repo2FullName}/pulls`,
-          `GET /repos/${fixtures.repo2FullName}/hooks`,
-          `PATCH /repos/${fixtures.repo2FullName}/hooks/123`,
-          `GET /repos/${fixtures.repo2FullName}/branches/master`,
-          `PUT /repos/${fixtures.repo2FullName}/branches/master/protection`,
-          `GET /repos/${fixtures.repo2FullName}/pulls`,
-          `GET /repos/${fixtures.repo2FullName}/issues/${fixtures.pullRequests[0].number}/comments`,
-          `POST /repos/${fixtures.repo2FullName}/statuses/${fixtures.pullRequests[0].head.sha}`,
-        ])
-        const createBranchBody = JSON.parse(rest[1].body)
-        const createZapprBody = JSON.parse(rest[2].body)
-        const createPrBody = JSON.parse(rest[3].body)
-
-        const expectedBranchName = nconf.get('ZAPPR_WELCOME_BRANCH_NAME')
-        expect(createBranchBody).to.deep.equal({
-          ref: `refs/heads/${expectedBranchName}`,
-          sha: fixtures.branch.commit.sha
-        })
-
-        expect(createZapprBody).to.deep.equal({
-          message: `Create ${nconf.get('VALID_ZAPPR_FILE_PATHS')[0]}`,
-          branch: expectedBranchName,
-          content: encode(nconf.get('ZAPPR_AUTOCREATED_CONFIG'))
-        })
-
-        expect(createPrBody).to.deep.equal({
-          title: nconf.get('ZAPPR_WELCOME_TITLE'),
-          base: repos[2].json.default_branch,
-          head: expectedBranchName,
-          body: nconf.get('ZAPPR_WELCOME_TEXT')
-        })
-
+        await do_welcome_pr_test(request, mountebank, imposter, fixtures)
         done()
       } catch (e) {
         done(e)
@@ -823,6 +826,62 @@ describe('API', () => {
         debug('Response: %o', body)
         expect(problem).to.have.property('status').that.is.a('number').and.above(400)
         expect(problem).to.have.property('title').that.is.a('string').and.not.empty
+        done()
+      } catch (e) {
+        done(e)
+      }
+    })
+
+    it('should not create a pull request when used the first time if no zapprfile is in repo and if ZAPPR_SKIP_WELCOME_PR is true', async(done) => {
+      try {
+        nconf.set('ZAPPR_SKIP_WELCOME_PR', true)
+
+        const repos = (await request.get('/api/repos').expect(200)).body
+        const id = repos[2].id
+        // enable approval check
+        await request.put(`/api/repos/${id}/approval`)
+                     .send()
+                     .expect(201)
+        const repo = await Repository.findById(id, {include: [Check]})
+        expect(repo.checks.length).to.equal(1)
+        expect(repo.checks[0].type).to.equal('approval')
+        expect(repo.welcomed).to.equal(true)
+
+        const calls = await mountebank.calls(imposter.port)
+        /**
+         * 1) get repos
+         * 2,3) zapprfile
+         * 4) get base
+         * 5,6) get, update web hooks
+         * 7,8) get, update branch protection
+         * 9-10) fetch pull requests and update status on those
+         */
+        expect(calls.length).to.equal(10)
+        expect(call(calls[0])).to.equal('GET /user/repos')
+        // 2+3 are much async and interchangeable
+        expect(call(calls[1])).to.match(/^GET \/repos\/.+?\/contents\/\.zappr\.ya?ml$/)
+        expect(call(calls[2])).to.match(/^GET \/repos\/.+?\/contents\/\.zappr\.ya?ml$/)
+        const [,,, ...rest] = calls
+        expect(rest.map(call)).to.deep.equal([
+          `GET /repos/${fixtures.repo2FullName}/hooks`,
+          `PATCH /repos/${fixtures.repo2FullName}/hooks/123`,
+          `GET /repos/${fixtures.repo2FullName}/branches/master`,
+          `PUT /repos/${fixtures.repo2FullName}/branches/master/protection`,
+          `GET /repos/${fixtures.repo2FullName}/pulls`,
+          `GET /repos/${fixtures.repo2FullName}/issues/${fixtures.pullRequests[0].number}/comments`,
+          `POST /repos/${fixtures.repo2FullName}/statuses/${fixtures.pullRequests[0].head.sha}`,
+        ])
+
+        done()
+      } catch (e) {
+        done(e)
+      }
+    })
+
+    it('should create a pull request when used the first time if no zapprfile is in repo and if ZAPPR_SKIP_WELCOME_PR is false', async(done) => {
+      try {
+        nconf.set('ZAPPR_SKIP_WELCOME_PR', false)
+        await do_welcome_pr_test(request, mountebank, imposter, fixtures)
         done()
       } catch (e) {
         done(e)

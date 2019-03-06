@@ -129,6 +129,9 @@ ZAPPR_AUTOCREATED_CONFIG: |
   #   from:
   #     collaborators: true
 
+# Uncomment this to prevent Zappr from creating a welcome pull request
+# This is especially useful if most repos managed by Zappr use the default config
+# ZAPPR_SKIP_WELCOME_PR: true
 ZAPPR_WELCOME_BRANCH_NAME: configure-zappr
 ZAPPR_WELCOME_TITLE: Configure Zappr
 ZAPPR_WELCOME_TEXT: |
