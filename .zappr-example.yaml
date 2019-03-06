@@ -3,6 +3,8 @@ approvals:
   minimum: 2
   # approval = comment that matches this regex
   pattern: "^(:\\+1:|👍)$"
+  # comments that match this pattern are assumed to have come from a robot user and therefore ignored
+  bot_user_pattern: (-robot$)
   veto:
     # veto/blocking a PR = comment that matches this regex
     pattern: "^(:\\-1:|👎)$"

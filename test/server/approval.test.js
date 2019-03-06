@@ -214,6 +214,10 @@ const BADGE_READY_CONFIG = {
     groups: CONFIG_APPROVAL_GROUPS
   }
 }
+const BOT_USER_CONFIG = { approvals: Object.assign({}, DEFAULT_CONFIG.approvals,
+  {
+    bot_user_pattern: '(\\[bot\\]$|-robot$)'
+  })}
 const SUCCESS_STATUS = Approval.generateStatus({
   approvals: {total: ['foo', 'bar']},
   vetos: []
@@ -1646,6 +1650,48 @@ describe('Approval#execute', () => {
         TOKEN
       ])
       expect(github.setIssueCommentBody.args[0][3]).to.equal(payload.comment.body + "\n\n![Vetoed with Zappr](" + BADGE_READY_CONFIG.approvals.groups['bar'].badge.veto + ")  ![Vetoed with Zappr](" + BADGE_READY_CONFIG.approvals.groups['baz'].badge.veto + ") ")
+      done()
+    } catch (e) {
+      done(e)
+    }
+  })
+
+  it('should ignore comments from a user whose login matches bot user regex', async(done) => {
+    github.getPullRequest = sinon.stub().returns(PR_PAYLOAD.pull_request)
+    try {
+      let commentWebhook = {
+        action: 'created',
+        repository: DEFAULT_REPO,
+        issue: {
+          number: 1
+        },
+        comment: {
+          id: 1,
+          user: {
+            login: 'v-robot'
+          }
+        }
+      }
+      
+      await approval.execute(BOT_USER_CONFIG, EVENTS.ISSUE_COMMENT, commentWebhook, TOKEN, DB_REPO_ID)
+      expect(github.setCommitStatus.callCount).to.equal(0)
+      
+      commentWebhook.comment.user.login = 'codecov[bot]'
+      await approval.execute(BOT_USER_CONFIG, EVENTS.ISSUE_COMMENT, commentWebhook, TOKEN, DB_REPO_ID)
+      expect(github.setCommitStatus.callCount).to.equal(0)
+      
+      done()
+    } catch (e) {
+      done(e)
+    }
+  })
+
+  it('should process comments from a user whose login does not match bot user regex', async(done) => {
+    github.getPullRequest = sinon.stub().returns(PR_PAYLOAD.pull_request)
+    try {
+      await approval.execute(BOT_USER_CONFIG, EVENTS.ISSUE_COMMENT, PR_COMMENT_PAYLOAD, TOKEN, DB_REPO_ID)
+      expect(github.setCommitStatus.callCount).to.equal(2)
+      
       done()
     } catch (e) {
       done(e)
