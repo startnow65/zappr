@@ -1,0 +1,26 @@
+[
+  {
+      "sha": "12ef2e03667709b260b282321594c8b430f73babd",
+      "filename": "my/dir/a.foo",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 1,
+      "changes": 2,
+      "blob_url": "https://github.com/owner/repo/blob/234c52eb7522341feb7e48830794e3f4b1d/my/dir/a.foo",
+      "raw_url": "https://github.com/owner/repo/blob/raw/234c52eb7522341feb7e48830794e3f4b1d/my/dir/a.foo",
+      "contents_url": "https://api.github.com/repos/owner/repo/contents/my/dir/a.foo?ref=234c52eb7522341feb7e48830794e3f4b1d",
+      "patch": "changes"
+  },
+  {
+    "sha": "12ef2e03667709b260b282321594c8b430f73babd",
+    "filename": "my/dir/b.bar",
+    "status": "modified",
+    "additions": 1,
+    "deletions": 1,
+    "changes": 2,
+    "blob_url": "https://github.com/owner/repo/blob/234c52eb7522341feb7e48830794e3f4b1d/my/dir/b.bar",
+    "raw_url": "https://github.com/owner/repo/blob/raw/234c52eb7522341feb7e48830794e3f4b1d/my/dir/b.bar",
+    "contents_url": "https://api.github.com/repos/owner/repo/contents/my/dir/b.bar?ref=234c52eb7522341feb7e48830794e3f4b1d",
+    "patch": "changes"
+  }
+]

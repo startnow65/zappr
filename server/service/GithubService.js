@@ -40,7 +40,8 @@ const API_URL_TEMPLATES = {
   COMMITS: '/repos/${owner}/${repo}/git/commits',
   REPOS: '/user/repos?page=${page}&visibility=all',
   REPO_BY_ID: '/repositories/${id}',
-  ISSUE_COMMENT_BY_ID: '/repos/${owner}/${repo}/issues/comments/${comment}'
+  ISSUE_COMMENT_BY_ID: '/repos/${owner}/${repo}/issues/comments/${comment}',
+  PR_FILES: '/repos/${owner}/${repo}/pulls/${number}/files'
 }
 
 export class GithubService {
@@ -696,6 +697,24 @@ export class GithubService {
     }
 
     return this.fetchPath('POST', url, payload, token)
+  }
+
+  /**
+   * Returns list of files changed in a pull request.
+   *
+   * @param user
+   * @param repo
+   * @param number
+   * @param token
+   * @returns {Array<string>}
+   */
+  async getPullRequestFiles(user, repo, number, token) {
+    const url = API_URL_TEMPLATES.PR_FILES
+                                 .replace('${owner}', user)
+                                 .replace('${repo}', repo)
+                                 .replace('${number}', number)
+    const files = await this.fetchPath('GET', url, null, token)
+    return files.map(f => f.filename)
   }
 }
 

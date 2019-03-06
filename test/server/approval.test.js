@@ -218,7 +218,43 @@ const BOT_USER_CONFIG = { approvals: Object.assign({}, DEFAULT_CONFIG.approvals,
   {
     bot_user_pattern: '(\\[bot\\]$|-robot$)'
   })}
-const SUCCESS_STATUS = Approval.generateStatus({
+  const INCLUDE_FILE_CONDITIONS_CONFIG = {
+    approvals: Object.assign({}, BADGE_READY_CONFIG.approvals, {groups: Object.assign({}, CONFIG_APPROVAL_GROUPS, {baz: Object.assign({}, LABEL_TEST_GROUP.baz, 
+      {
+        conditions: {
+          files: {
+            include: ['*.foo', '.foo.bar', 'foo.bar']
+          }
+        }
+      })})
+    })
+  }
+  const EXCLUDE_FILE_CONDITIONS_CONFIG = {
+    approvals: Object.assign({}, BADGE_READY_CONFIG.approvals, {groups: Object.assign({}, CONFIG_APPROVAL_GROUPS, {baz: Object.assign({}, LABEL_TEST_GROUP.baz, 
+      {
+        conditions: {
+          files: {
+            exclude: ['*.foo', '.foo.bar', 'foo.bar']
+          }
+        }
+      })})
+    })
+  }
+  const FILE_AND_LABEL_CONDITIONS_CONFIG = {
+    approvals: Object.assign({}, INCLUDE_LABEL_CONDITIONS_CONFIG.approvals, {groups: Object.assign({}, CONFIG_APPROVAL_GROUPS, {baz: Object.assign({}, LABEL_TEST_GROUP.baz, 
+      {
+        conditions: {
+          labels: {
+            include: ['goodlabel']
+          },
+          files: {
+            include: ['*.foo', '.foo.bar', 'foo.bar']
+          }
+        }
+      })})
+    })
+  }
+  const SUCCESS_STATUS = Approval.generateStatus({
   approvals: {total: ['foo', 'bar']},
   vetos: []
 }, DEFAULT_CONFIG.approvals)
@@ -503,7 +539,8 @@ describe('Approval#execute', () => {
       getPullRequest: sinon.spy(),
       getComments: sinon.spy(),
       fetchPullRequestCommits: sinon.spy(),
-      getIssueLabels: sinon.spy()
+      getIssueLabels: sinon.spy(),
+      getPullRequestFiles: sinon.stub().returns([])
     }
     auditService = sinon.createStubInstance(AuditService)
     approval = new Approval(github, pullRequestHandler, auditService)
@@ -1692,6 +1729,332 @@ describe('Approval#execute', () => {
       await approval.execute(BOT_USER_CONFIG, EVENTS.ISSUE_COMMENT, PR_COMMENT_PAYLOAD, TOKEN, DB_REPO_ID)
       expect(github.setCommitStatus.callCount).to.equal(2)
       
+      done()
+    } catch (e) {
+      done(e)
+    }
+  })
+
+  it('should not fetch PR files if file based condition is not specified', async(done) => {
+    github.getComments = sinon.stub().returns([{
+      body: ':+1:',
+      user: 'foo',
+      id: 1
+    }, {
+      body: ':+1:',
+      user: 'bar',
+      id: 2
+    }])
+    github.getPullRequest = sinon.stub().returns(PR_PAYLOAD.pull_request)
+
+    try {
+      await approval.execute(DEFAULT_CONFIG, EVENTS.ISSUE_COMMENT, ISSUE_PAYLOAD, TOKEN, DB_REPO_ID)
+
+      expect(github.setCommitStatus.callCount).to.equal(2)
+      expect(github.getPullRequestFiles.callCount).to.equal(0)
+      done()
+    } catch (e) {
+      done(e)
+    }
+  })
+
+  it('should ignore approval group requirements if "includes" file based condition is not met', async(done) => {
+    github.getComments = sinon.stub().returns([{
+      body: ':+1:',
+      user: 'foo',
+      id: 1
+    }, {
+      body: ':+1:',
+      user: 'bar',
+      id: 2
+    }])
+    github.getPullRequest = sinon.stub().returns(PR_PAYLOAD.pull_request)
+    github.getPullRequestFiles = sinon.stub().returns(['foo/dir/a.a', 'foo/dir/b.b', 'foo/dir/c.c'])
+
+    try {
+      await approval.execute(INCLUDE_FILE_CONDITIONS_CONFIG, EVENTS.ISSUE_COMMENT, ISSUE_PAYLOAD, TOKEN, DB_REPO_ID)
+
+      expect(github.setCommitStatus.callCount).to.equal(2)
+      expect(github.getPullRequestFiles.callCount).to.equal(1)
+
+      const successStatusCallArgs = github.setCommitStatus.args[1]
+      expect(successStatusCallArgs).to.deep.equal([
+        'mfellner',
+        'hello-world',
+        'abcd1234',
+        SUCCESS_STATUS,
+        TOKEN
+      ])
+      done()
+    } catch (e) {
+      done(e)
+    }
+  })
+
+  it('should apply approval group requirements if "includes" file based condition is met: matching file not in root dir', async(done) => {
+    github.getComments = sinon.stub().returns([{
+      body: ':+1:',
+      user: 'foo',
+      id: 1
+    }, {
+      body: ':+1:',
+      user: 'bar',
+      id: 2
+    }])
+    github.getPullRequest = sinon.stub().returns(PR_PAYLOAD.pull_request)
+    github.getPullRequestFiles = sinon.stub().returns(['foo/dir/a.a', 'foo/dir/b.b', 'foo/dir/c.foo', 'foo/dir/d.d'])
+
+    try {
+      await approval.execute(INCLUDE_FILE_CONDITIONS_CONFIG, EVENTS.ISSUE_COMMENT, ISSUE_PAYLOAD, TOKEN, DB_REPO_ID)
+
+      expect(github.setCommitStatus.callCount).to.equal(2)
+      expect(github.getPullRequestFiles.callCount).to.equal(1)
+
+      const successStatusCallArgs = github.setCommitStatus.args[1]
+      expect(successStatusCallArgs).to.deep.equal([
+        'mfellner',
+        'hello-world',
+        'abcd1234',
+        MISSING_APPROVAL_GROUP_STATUS,
+        TOKEN
+      ])
+      done()
+    } catch (e) {
+      done(e)
+    }
+  })
+
+  it('should apply approval group requirements if "includes" file based condition is met: matching file in root dir', async(done) => {
+    github.getComments = sinon.stub().returns([{
+      body: ':+1:',
+      user: 'foo',
+      id: 1
+    }, {
+      body: ':+1:',
+      user: 'bar',
+      id: 2
+    }])
+    github.getPullRequest = sinon.stub().returns(PR_PAYLOAD.pull_request)
+    github.getPullRequestFiles = sinon.stub().returns(['foo/dir/a.a', 'foo/dir/b.b', 'c.foo', 'foo/dir/d.d'])
+
+    try {
+      await approval.execute(INCLUDE_FILE_CONDITIONS_CONFIG, EVENTS.ISSUE_COMMENT, ISSUE_PAYLOAD, TOKEN, DB_REPO_ID)
+
+      expect(github.setCommitStatus.callCount).to.equal(2)
+      expect(github.getPullRequestFiles.callCount).to.equal(1)
+
+      const successStatusCallArgs = github.setCommitStatus.args[1]
+      expect(successStatusCallArgs).to.deep.equal([
+        'mfellner',
+        'hello-world',
+        'abcd1234',
+        MISSING_APPROVAL_GROUP_STATUS,
+        TOKEN
+      ])
+      done()
+    } catch (e) {
+      done(e)
+    }
+  })
+
+  it('should apply approval group requirements if "includes" file based condition is met: exact matching file name', async(done) => {
+    github.getComments = sinon.stub().returns([{
+      body: ':+1:',
+      user: 'foo',
+      id: 1
+    }, {
+      body: ':+1:',
+      user: 'bar',
+      id: 2
+    }])
+    github.getPullRequest = sinon.stub().returns(PR_PAYLOAD.pull_request)
+    github.getPullRequestFiles = sinon.stub().returns(['foo/dir/a.a', 'foo/dir/b.b', '.foo.bar', 'foo/dir/d.d'])
+
+    try {
+      await approval.execute(INCLUDE_FILE_CONDITIONS_CONFIG, EVENTS.ISSUE_COMMENT, ISSUE_PAYLOAD, TOKEN, DB_REPO_ID)
+
+      expect(github.setCommitStatus.callCount).to.equal(2)
+      expect(github.getPullRequestFiles.callCount).to.equal(1)
+
+      const successStatusCallArgs = github.setCommitStatus.args[1]
+      expect(successStatusCallArgs).to.deep.equal([
+        'mfellner',
+        'hello-world',
+        'abcd1234',
+        MISSING_APPROVAL_GROUP_STATUS,
+        TOKEN
+      ])
+      done()
+    } catch (e) {
+      done(e)
+    }
+  })
+
+  it('should ignore approval group requirements if "excludes" file based condition is not met', async(done) => {
+    github.getComments = sinon.stub().returns([{
+      body: ':+1:',
+      user: 'foo',
+      id: 1
+    }, {
+      body: ':+1:',
+      user: 'bar',
+      id: 2
+    }])
+    github.getPullRequest = sinon.stub().returns(PR_PAYLOAD.pull_request)
+    github.getPullRequestFiles = sinon.stub().returns(['foo/dir/a.a', 'foo/dir/b.b', 'foo/dir/c.foo', 'foo/dir/d.d'])
+
+    try {
+      await approval.execute(EXCLUDE_FILE_CONDITIONS_CONFIG, EVENTS.ISSUE_COMMENT, ISSUE_PAYLOAD, TOKEN, DB_REPO_ID)
+
+      expect(github.setCommitStatus.callCount).to.equal(2)
+      expect(github.getPullRequestFiles.callCount).to.equal(1)
+
+      const successStatusCallArgs = github.setCommitStatus.args[1]
+      expect(successStatusCallArgs).to.deep.equal([
+        'mfellner',
+        'hello-world',
+        'abcd1234',
+        SUCCESS_STATUS,
+        TOKEN
+      ])
+      done()
+    } catch (e) {
+      done(e)
+    }
+  })
+
+  it('should apply approval group requirements if "excludes" file based condition is met', async(done) => {
+    github.getComments = sinon.stub().returns([{
+      body: ':+1:',
+      user: 'foo',
+      id: 1
+    }, {
+      body: ':+1:',
+      user: 'bar',
+      id: 2
+    }])
+    github.getPullRequest = sinon.stub().returns(PR_PAYLOAD.pull_request)
+    github.getPullRequestFiles = sinon.stub().returns(['foo/dir/a.a', 'foo/dir/b.b', 'foo/dir/c.c'])
+
+    try {
+      await approval.execute(EXCLUDE_FILE_CONDITIONS_CONFIG, EVENTS.ISSUE_COMMENT, ISSUE_PAYLOAD, TOKEN, DB_REPO_ID)
+
+      expect(github.setCommitStatus.callCount).to.equal(2)
+      expect(github.getPullRequestFiles.callCount).to.equal(1)
+
+      const successStatusCallArgs = github.setCommitStatus.args[1]
+      expect(successStatusCallArgs).to.deep.equal([
+        'mfellner',
+        'hello-world',
+        'abcd1234',
+        MISSING_APPROVAL_GROUP_STATUS,
+        TOKEN
+      ])
+      done()
+    } catch (e) {
+      done(e)
+    }
+  })
+
+  it('should ignore approval group requirements if label based condition is met and file based condition is not met', async(done) => {
+    github.getComments = sinon.stub().returns([{
+      body: ':+1:',
+      user: 'foo',
+      id: 1
+    }, {
+      body: ':+1:',
+      user: 'bar',
+      id: 2
+    }])
+    github.getPullRequest = sinon.stub().returns(PR_PAYLOAD.pull_request)
+    github.getIssueLabels = sinon.stub().returns(['goodlabel','badlabel'])
+    github.getPullRequestFiles = sinon.stub().returns(['foo/dir/a.a', 'foo/dir/b.b', 'foo/dir/c.c'])
+
+    try {
+      await approval.execute(FILE_AND_LABEL_CONDITIONS_CONFIG, EVENTS.ISSUE_COMMENT, ISSUE_PAYLOAD, TOKEN, DB_REPO_ID)
+
+      expect(github.setCommitStatus.callCount).to.equal(2)
+      expect(github.getIssueLabels.callCount).to.equal(1)
+      expect(github.getPullRequestFiles.callCount).to.equal(1)
+
+      const successStatusCallArgs = github.setCommitStatus.args[1]
+      expect(successStatusCallArgs).to.deep.equal([
+        'mfellner',
+        'hello-world',
+        'abcd1234',
+        SUCCESS_STATUS,
+        TOKEN
+      ])
+      done()
+    } catch (e) {
+      done(e)
+    }
+  })
+
+  it('should ignore approval group requirements if label based condition is not met and file based condition is met', async(done) => {
+    github.getComments = sinon.stub().returns([{
+      body: ':+1:',
+      user: 'foo',
+      id: 1
+    }, {
+      body: ':+1:',
+      user: 'bar',
+      id: 2
+    }])
+    github.getPullRequest = sinon.stub().returns(PR_PAYLOAD.pull_request)
+    github.getIssueLabels = sinon.stub().returns([])
+    github.getPullRequestFiles = sinon.stub().returns(['foo/dir/a.a', 'foo/dir/b.b', 'foo/dir/c.foo', 'foo/dir/d.d'])
+
+    try {
+      await approval.execute(FILE_AND_LABEL_CONDITIONS_CONFIG, EVENTS.ISSUE_COMMENT, ISSUE_PAYLOAD, TOKEN, DB_REPO_ID)
+
+      expect(github.setCommitStatus.callCount).to.equal(2)
+      expect(github.getIssueLabels.callCount).to.equal(1)
+      expect(github.getPullRequestFiles.callCount).to.equal(1)
+
+      const successStatusCallArgs = github.setCommitStatus.args[1]
+      expect(successStatusCallArgs).to.deep.equal([
+        'mfellner',
+        'hello-world',
+        'abcd1234',
+        SUCCESS_STATUS,
+        TOKEN
+      ])
+      done()
+    } catch (e) {
+      done(e)
+    }
+  })
+
+  it('should apply approval group requirements if label based condition is met and file based condition is met', async(done) => {
+    github.getComments = sinon.stub().returns([{
+      body: ':+1:',
+      user: 'foo',
+      id: 1
+    }, {
+      body: ':+1:',
+      user: 'bar',
+      id: 2
+    }])
+    github.getPullRequest = sinon.stub().returns(PR_PAYLOAD.pull_request)
+    github.getIssueLabels = sinon.stub().returns(['goodlabel','badlabel'])
+    github.getPullRequestFiles = sinon.stub().returns(['foo/dir/a.a', 'foo/dir/b.b', 'foo/dir/c.foo', 'foo/dir/d.d'])
+
+    try {
+      await approval.execute(FILE_AND_LABEL_CONDITIONS_CONFIG, EVENTS.ISSUE_COMMENT, ISSUE_PAYLOAD, TOKEN, DB_REPO_ID)
+
+      expect(github.setCommitStatus.callCount).to.equal(2)
+      expect(github.getIssueLabels.callCount).to.equal(1)
+      expect(github.getPullRequestFiles.callCount).to.equal(1)
+
+      const successStatusCallArgs = github.setCommitStatus.args[1]
+      expect(successStatusCallArgs).to.deep.equal([
+        'mfellner',
+        'hello-world',
+        'abcd1234',
+        MISSING_APPROVAL_GROUP_STATUS,
+        TOKEN
+      ])
       done()
     } catch (e) {
       done(e)

@@ -413,4 +413,31 @@ describe('The Github service', () => {
       })
     })
   })
+
+  describe('#getPullRequestFiles', () => {
+    it('getPullRequestFiles', async(done) => {
+      try {
+        const USER = 'user'
+        const REPO = 'repo'
+        const TOKEN = 'token'
+        const PRID = 1
+        const MOCK_PR_FILES = require('../fixtures/github.pull_request.files.json')
+        
+        github.fetchPath.returns(MOCK_PR_FILES)
+        const files = await github.getPullRequestFiles('user', 'repo', 1, 'token')
+
+        expect(github.fetchPath.args).to.deep.equal([
+          ['GET', `/repos/${USER}/${REPO}/pulls/${PRID}/files`,
+            null,
+            TOKEN]
+        ])
+
+        expect(files).to.deep.equal(['my/dir/a.foo', 'my/dir/b.bar'])
+
+        done()
+      } catch (e) {
+        done(e)
+      }
+    })
+  })
 })

@@ -12,6 +12,7 @@ const context = 'zappr'
 const info = logger('approval', 'info')
 const debug = logger('approval')
 const error = logger('approval', 'error')
+const minimatch = require("minimatch")
 
 /**
  * Checks if login approvals shouldn't be ignored
@@ -34,12 +35,18 @@ function commenterIsNotIgnored (login, config) {
  */
 export function getOptionalDetailsRequiredForPR (config) {
   return (config && config.groups) ? Object.keys(config.groups).reduce((result, group) => {
-    if (config.groups[group].conditions && config.groups[group].conditions.labels
+    if (config.groups[group].conditions) {
+      if (config.groups[group].conditions.labels
         && ((config.groups[group].conditions.labels.include && config.groups[group].conditions.labels.include.length > 0) ||
         (config.groups[group].conditions.labels.exclude && config.groups[group].conditions.labels.exclude.length > 0))) result.labels = true
 
+      if (config.groups[group].conditions.files && (
+        (config.groups[group].conditions.files.include && config.groups[group].conditions.files.include.length > 0) || 
+        (config.groups[group].conditions.files.exclude && config.groups[group].conditions.files.exclude.length > 0))) result.files = true
+    }
+
     return result
-  }, { labels: false }) : { labels: false }
+  }, { labels: false, files: false }) : { labels: false, files: false }
 }
 
 export default class Approval extends Check {
@@ -86,9 +93,10 @@ export default class Approval extends Check {
    * @param approvals Approval stats. Includes `total` approvals and group information.
    * @param vetos Number of vetos.
    * @param approvalConfig Approval configuration
+   * @param files An array of files that was changed in the PR
    * @returns {Object} Object consumable by Github Status API
    */
-  static generateStatus({approvals, vetos}, {minimum, groups}, labels) {
+  static generateStatus({approvals, vetos}, {minimum, groups}, labels, files) {
     if (vetos.length > 0) {
       return {
         description: `Vetoes: ${vetos.map(u => `@${u}`).join(', ')}.`,
@@ -102,9 +110,11 @@ export default class Approval extends Check {
       const unsatisfied = Object.keys(approvals.groups)
                                 .reduce((result, approvalGroup) => {
                                   let needed = groups[approvalGroup].minimum
-                                  if (labels) {
+
+                                  if (groups[approvalGroup].conditions) {
                                     needed = -1
-                                    if (groups[approvalGroup].conditions && groups[approvalGroup].conditions.labels) {
+
+                                    if (labels && groups[approvalGroup].conditions.labels) {
                                       if (groups[approvalGroup].conditions.labels.exclude && groups[approvalGroup].conditions.labels.exclude.some(l=> labels.includes(l))) {
                                         needed = 0
                                       }
@@ -112,8 +122,20 @@ export default class Approval extends Check {
                                         needed = 0
                                       }
                                     }
+  
+                                    // if needed approvals is -1 then label conditions were met, check file based rules
+                                    if (needed === -1 && files && groups[approvalGroup].conditions.files) {
+                                      if (groups[approvalGroup].conditions.files.exclude && groups[approvalGroup].conditions.files.exclude.some((filePattern) => files.some(prFile=> minimatch(prFile, filePattern, { matchBase: !filePattern.includes("/") })))) {
+                                        needed = 0
+                                      }
+                                      if (needed === -1 && groups[approvalGroup].conditions.files.include && !groups[approvalGroup].conditions.files.include.some((filePattern) => files.some(prFile=> minimatch(prFile, filePattern, { matchBase: !filePattern.includes("/") })))) {
+                                        needed = 0
+                                      }
+                                    }
+
                                     if (needed === -1) needed = groups[approvalGroup].minimum
                                   }
+
                                   const given = approvals.groups[approvalGroup].length
                                   const diff = needed - given
                                   if (diff > 0) {
@@ -377,7 +399,8 @@ export default class Approval extends Check {
     const sha = pull_request.head.sha
     const {approvals, vetos} = await this.fetchAndCountApprovalsAndVetos(repository, pull_request, lastPush, additionalComments, config, token)
     const labels = requiredOptionalPRInfo.labels ? await this.github.getIssueLabels(user, repoName, pull_request.number, token): []
-    const status = Approval.generateStatus({approvals, vetos: vetos.total}, config.approvals, labels)
+    const files = requiredOptionalPRInfo.files ? await this.github.getPullRequestFiles(user, repoName, pull_request.number, token) : []
+    const status = Approval.generateStatus({approvals, vetos: vetos.total}, config.approvals, labels, files)
     // update status
     await this.github.setCommitStatus(user, repoName, sha, status, token)
     // set appropriate badge on PR comment
@@ -458,6 +481,7 @@ export default class Approval extends Check {
       if (event === EVENTS.PULL_REQUEST && pull_request.state === 'open') {
         sha = pull_request.head.sha
         const dbPR = await this.getOrCreateDbPullRequest(dbRepoId, number)
+        const requiredOptionalPRInfo = getOptionalDetailsRequiredForPR(config.approvals)
         // if it was (re)opened
         if (action === 'opened' || action === 'reopened') {
           // set status to pending first
@@ -469,7 +493,8 @@ export default class Approval extends Check {
             const vetos = []
             // this PR was just opened, there won't be a label at this time
             const labels = []
-            const status = Approval.generateStatus({approvals, vetos}, config.approvals, labels)
+            const files = requiredOptionalPRInfo.files ? await this.github.getPullRequestFiles(user, repoName, pull_request.number, token) : []
+            const status = Approval.generateStatus({approvals, vetos}, config.approvals, labels, files)
             await this.github.setCommitStatus(user, repoName, sha, status, token)
             await this.audit.log(new AuditEvent(AUDIT_EVENTS.COMMIT_STATUS_UPDATE).fromGithubEvent(hookPayload)
                                                                                   .withResult({
@@ -488,7 +513,6 @@ export default class Approval extends Check {
           // get approvals for pr
           info(`${repository.full_name}#${number}: PR was reopened`)
           const frozenComments = await this.pullRequestHandler.onGetFrozenComments(dbPR.id, dbPR.last_push)
-          const requiredOptionalPRInfo = getOptionalDetailsRequiredForPR(config.approvals)
           await this.fetchApprovalsAndSetStatus(repository, pull_request, dbPR.last_push, config, token, frozenComments, requiredOptionalPRInfo)
           // if it was synced, ie a commit added to it
         } else if (action === 'synchronize') {
@@ -501,7 +525,8 @@ export default class Approval extends Check {
           const vetos = []
           const requiredOptionalPRInfo = getOptionalDetailsRequiredForPR(config.approvals)
           const labels = requiredOptionalPRInfo.labels ? await this.github.getIssueLabels(user, repoName, pull_request.number, token): []
-          const status = Approval.generateStatus({approvals, vetos}, config.approvals, labels)
+          const files = requiredOptionalPRInfo.files ? await this.github.getPullRequestFiles(user, repoName, pull_request.number, token) : []
+          const status = Approval.generateStatus({approvals, vetos}, config.approvals, labels, files)
           await this.github.setCommitStatus(user, repoName, sha, status, token)
           await this.audit.log(new AuditEvent(AUDIT_EVENTS.COMMIT_STATUS_UPDATE).fromGithubEvent(hookPayload)
                                                                                 .withResult({
