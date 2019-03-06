@@ -13,14 +13,15 @@ const info = logger('approval', 'info')
 const debug = logger('approval')
 const error = logger('approval', 'error')
 
-  /**
-   * Checks if login approvals shouldn't be ignored
-   *
-   * @param login Github login of the commente
-   * @returns {Boolean} `true` if the approval should be counted
-   */
-function commenterIsNotIgnored (login) {
-  return IGNORE_LOGIN_RE.reduce((accumulator, currentValue) => accumulator && !RegExp(currentValue).test(login), true);
+/**
+ * Checks if login approvals shouldn't be ignored
+ *
+ * @param login Github login of the commente
+ * @param config The approval/veto configuration
+ * @returns {Boolean} `true` if the approval should be counted
+ */
+function commenterIsNotIgnored (login, config) {
+  return config.bot_user_pattern ? !RegExp(config.bot_user_pattern).test(login) : IGNORE_LOGIN_RE.reduce((accumulator, currentValue) => accumulator && !RegExp(currentValue).test(login), true)
 }
 
 /**
@@ -258,7 +259,7 @@ export default class Approval extends Check {
     const potentialApprovalComments = comments.filter(comment => {
                                                 const login = comment.user
                                                 // comment is ignored if login is in ignored list or matches a global ignored regex array
-                                                const include = (ignore.indexOf(login) === -1 && commenterIsNotIgnored(login));
+                                                const include = (ignore.indexOf(login) === -1 && commenterIsNotIgnored(login, config));
                                                 if (!include) {
                                                   info('%s: Ignoring user: %s.', fullName, login)
                                                 }
@@ -534,7 +535,7 @@ export default class Approval extends Check {
           return
         }
         const author = hookPayload.comment.user.login
-        if (!commenterIsNotIgnored(author)) {
+        if (!commenterIsNotIgnored(author, config.approvals)) {
           debug(`${repository.full_name}#${issue.number}: Ignoring comment, it was created by a robot user.`)
           return
         }
