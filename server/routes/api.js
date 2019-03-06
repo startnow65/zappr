@@ -139,8 +139,12 @@ export function repo(router) {
       if (!repo.welcomed) {
         try {
           if (zapprFile.length === 0) {
-            await githubService.proposeZapprfile(owner, name, defaultBranch, token)
-            info(`${owner}/${name}: Welcome to Zappr.`)
+            if (nconf.get('ZAPPR_SKIP_WELCOME_PR')) {
+              info("Skipping welcome to Zappr PR, ZAPPR_SKIP_WELCOME_PR is set to true")
+            } else {
+              await githubService.proposeZapprfile(owner, name, defaultBranch, token)
+              info(`${owner}/${name}: Welcome to Zappr.`)
+            }
           } else {
             info(`${owner}/${name}: Welcome to Zappr (no PR needed).`)
           }
