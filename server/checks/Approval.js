@@ -539,8 +539,6 @@ export default class Approval extends Check {
           return
         }
         sha = pr.head.sha
-        // set status to pending first
-        await this.github.setCommitStatus(user, repoName, sha, pendingPayload, token)
         // read last push date from db
         const dbPR = await this.getOrCreateDbPullRequest(dbRepoId, issue.number)
         // read frozen comments and update if appropriate
@@ -562,10 +560,15 @@ export default class Approval extends Check {
             await this.pullRequestHandler.onAddFrozenComment(dbPR.id, frozenComment)
             if (new Date(comment.created_at) > dbPR.last_push) {
               frozenComments.push(frozenComment)
+
+              // Can return now. Since the approval state would not be changed by this edit, there is no need setting status to "pending" and back to what it was before the edit
+              info(`${repository.full_name}#${issue.number}: ${editor} ${action} ${author}'s comment ${commentId}, it's now frozen, PR status would also not be set`)
+              return
             }
-            info(`${repository.full_name}#${issue.number}: ${editor} ${action} ${author}'s comment ${commentId}, it's now frozen.`)
           }
         }
+        // set status to pending first
+        await this.github.setCommitStatus(user, repoName, sha, pendingPayload, token)
         debug(`${repository.full_name}#${issue.number}: Comment added`)
         const requiredOptionalPRInfo = getOptionalDetailsRequiredForPR(config.approvals)
         await this.fetchApprovalsAndSetStatus(repository, pr, dbPR.last_push, config, token, frozenComments, requiredOptionalPRInfo, hookPayload.comment)

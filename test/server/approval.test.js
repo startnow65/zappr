@@ -1651,4 +1651,104 @@ describe('Approval#execute', () => {
       done(e)
     }
   })
+
+  TRIGGER_ISSUE_ACTIONS.forEach(action => {
+    it(`should not set PR status when comment was ${action} by a non-author`, async(done) => {
+      try {
+        const pullRequestNumber = 123
+
+        const pullRequest = {
+          number: pullRequestNumber,
+          updated_at: '2016-03-02T13:37:00Z',
+          state: 'open',
+          user: {
+            login: 'stranger'
+          },
+          head: {
+            sha: 'abcd1234'
+          }
+        }
+
+        const openPullRequestWebhook = {
+          action: 'opened',
+          number: pullRequestNumber,
+          repository: DEFAULT_REPO,
+          pull_request: {
+            number: pullRequestNumber,
+            updated_at: '2016-03-02T13:37:00Z',
+            state: 'open',
+            user: {
+              login: 'stranger'
+            },
+            head: {
+              sha: 'abcd1234'
+            }
+          }
+        }
+
+        const commentWebhook = {
+          action: 'created',
+          repository: DEFAULT_REPO,
+          issue: {
+            number: pullRequestNumber
+          },
+          comment: {
+            id: 1,
+            user: {
+              login: 'bar'
+            }
+          }
+        }
+
+        const commentModificationWebhook = {
+          action: action,
+          repository: DEFAULT_REPO,
+          issue: {
+            number: pullRequestNumber
+          },
+          changes: {
+            body: {
+              from: ':+1:'
+            }
+          },
+          comment: {
+            id: 1,
+            body: ':+1: :+1:',
+            created_at: '2016-08-15T13:03:28Z',
+            user: {
+              login: 'bar'
+            }
+          },
+          sender: {
+            login: 'foo'
+          }
+        }
+
+        github.getPullRequest = sinon.stub()
+          .withArgs(DEFAULT_REPO.owner.login, DEFAULT_REPO.name, pullRequestNumber, TOKEN)
+          .returns(pullRequest)
+        pullRequestHandler.onGet = sinon.stub().returns(Object.assign({}, DB_PR, {last_push: new Date('2016-08-15T13:00:28Z')}))
+
+        await approval.execute(DEFAULT_CONFIG, EVENTS.PULL_REQUEST, openPullRequestWebhook, TOKEN, DB_REPO_ID)
+
+        github.getComments = sinon.stub()
+          .returns([{
+            id: 1,
+            body: ':+1:',
+            user: 'bar'
+          }])
+
+        await approval.execute(DEFAULT_CONFIG, EVENTS.ISSUE_COMMENT, commentWebhook, TOKEN, DB_REPO_ID)
+        
+        github.setCommitStatus = sinon.spy()
+        await approval.execute(DEFAULT_CONFIG, EVENTS.ISSUE_COMMENT, commentModificationWebhook, TOKEN, DB_REPO_ID)
+
+        expect(github.setCommitStatus.callCount).to.equal(0)
+
+        done()
+      } catch (e) {
+        done(e)
+      }
+    })
+  })
 })
