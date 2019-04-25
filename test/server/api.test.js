@@ -878,9 +878,89 @@ describe('API', () => {
       }
     })
 
-    it('should create a pull request when used the first time if no zapprfile is in repo and if ZAPPR_SKIP_WELCOME_PR is false', async(done) => {
+    it('should not create a pull request when used the first time if no zapprfile is in repo and if ZAPPR_SKIP_WELCOME_PR is "true"', async(done) => {
       try {
+        nconf.set('ZAPPR_SKIP_WELCOME_PR', "true")
+
+        const repos = (await request.get('/api/repos').expect(200)).body
+        const id = repos[2].id
+        // enable approval check
+        await request.put(`/api/repos/${id}/approval`)
+                     .send()
+                     .expect(201)
+        const repo = await Repository.findById(id, {include: [Check]})
+        expect(repo.checks.length).to.equal(1)
+        expect(repo.checks[0].type).to.equal('approval')
+        expect(repo.welcomed).to.equal(true)
+
+        const calls = await mountebank.calls(imposter.port)
+        /**
+         * 1) get repos
+         * 2,3) zapprfile
+         * 4) get base
+         * 5,6) get, update web hooks
+         * 7,8) get, update branch protection
+         * 9-10) fetch pull requests and update status on those
+         */
+        expect(calls.length).to.equal(10)
+        expect(call(calls[0])).to.equal('GET /user/repos')
+        // 2+3 are much async and interchangeable
+        expect(call(calls[1])).to.match(/^GET \/repos\/.+?\/contents\/\.zappr\.ya?ml$/)
+        expect(call(calls[2])).to.match(/^GET \/repos\/.+?\/contents\/\.zappr\.ya?ml$/)
+        const [,,, ...rest] = calls
+        expect(rest.map(call)).to.deep.equal([
+          `GET /repos/${fixtures.repo2FullName}/hooks`,
+          `PATCH /repos/${fixtures.repo2FullName}/hooks/123`,
+          `GET /repos/${fixtures.repo2FullName}/branches/master`,
+          `PUT /repos/${fixtures.repo2FullName}/branches/master/protection`,
+          `GET /repos/${fixtures.repo2FullName}/pulls`,
+          `GET /repos/${fixtures.repo2FullName}/issues/${fixtures.pullRequests[0].number}/comments`,
+          `POST /repos/${fixtures.repo2FullName}/statuses/${fixtures.pullRequests[0].head.sha}`,
+        ])
+
+        done()
+      } catch (e) {
+        done(e)
+      }
+    })
+
+    it('should create a pull request when used the first time if no zapprfile is in repo and if ZAPPR_SKIP_WELCOME_PR is false (boolean)', async(done) => {
+      try {
+        // Test false boolean
         nconf.set('ZAPPR_SKIP_WELCOME_PR', false)
+        await do_welcome_pr_test(request, mountebank, imposter, fixtures)
+        done()
+      } catch (e) {
+        done(e)
+      }
+    })
+
+    it('should create a pull request when used the first time if no zapprfile is in repo and if ZAPPR_SKIP_WELCOME_PR is "false"', async(done) => {
+      try {
+        // Test false string
+        nconf.set('ZAPPR_SKIP_WELCOME_PR', "false")
+        await do_welcome_pr_test(request, mountebank, imposter, fixtures)
+        done()
+      } catch (e) {
+        done(e)
+      }
+    })
+
+    it('should create a pull request when used the first time if no zapprfile is in repo and if ZAPPR_SKIP_WELCOME_PR is a non boolean string', async(done) => {
+      try {
+        // Test arbitrary string
+        nconf.set('ZAPPR_SKIP_WELCOME_PR', "12345")
+        await do_welcome_pr_test(request, mountebank, imposter, fixtures)
+        done()
+      } catch (e) {
+        done(e)
+      }
+    })
+
+    it('should create a pull request when used the first time if no zapprfile is in repo and if ZAPPR_SKIP_WELCOME_PR is an empty string', async(done) => {
+      try {
+        // Test empty string
+        nconf.set('ZAPPR_SKIP_WELCOME_PR', "")
         await do_welcome_pr_test(request, mountebank, imposter, fixtures)
         done()
       } catch (e) {

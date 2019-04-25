@@ -18,3 +18,10 @@ export function request(...args) {
     })
   })
 }
+
+export function getBoolean(obj, defaultValue = false) {
+  if ((typeof obj) === 'boolean') return obj
+  if ((typeof obj) === 'string') return obj === 'true'
+
+  return defaultValue
+}

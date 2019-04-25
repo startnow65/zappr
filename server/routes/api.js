@@ -11,6 +11,7 @@ import { repositoryHandler } from '../handler/RepositoryHandler'
 import ZapprConfiguration from '../zapprfile/Configuration'
 import { getCheckByType } from '../checks'
 import { logger } from '../../common/debug'
+import { getBoolean } from '../util'
 
 const error = logger('api', 'error')
 const warn = logger('api', 'warn')
@@ -139,7 +140,7 @@ export function repo(router) {
       if (!repo.welcomed) {
         try {
           if (zapprFile.length === 0) {
-            if (nconf.get('ZAPPR_SKIP_WELCOME_PR')) {
+            if (getBoolean(nconf.get('ZAPPR_SKIP_WELCOME_PR'), false)) {
               info("Skipping welcome to Zappr PR, ZAPPR_SKIP_WELCOME_PR is set to true")
             } else {
               await githubService.proposeZapprfile(owner, name, defaultBranch, token)
